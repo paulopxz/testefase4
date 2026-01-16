@@ -199,4 +199,21 @@ with tab3:
     st.subheader("📊 Métricas de Validação do Modelo")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Acur
+
+    c1.metric(
+        "Acurácia",
+        f"{model_info['accuracy']:.2%}"
+    )
+
+    c2.metric(
+        "Precision",
+        f"{model_info['precision']:.2%}"
+    )
+
+    c3.metric(
+        "Recall",
+        f"{model_info['recall']:.2%}"
+    )
+
+    with st.expander("🔍 Ver métricas completas"):
+        st.json(model_info)
