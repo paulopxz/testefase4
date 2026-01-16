@@ -1,7 +1,7 @@
 # ========================================
 # IBOVESPA PREDICTION DASHBOARD
 # Tech Challenge - Fase 4
-# VERSÃO CONSERVADORA FINAL
+# VERSÃO FINAL CONSERVADORA
 # ========================================
 
 import streamlit as st
@@ -27,12 +27,12 @@ st.title("📊 IBOVESPA Prediction Dashboard")
 st.markdown("""
 ### 🤖 Modelo Preditivo (Fase 2)
 
-Este app realiza o **deploy do modelo de Machine Learning desenvolvido na Fase 2**
+Este aplicativo realiza o **deploy do modelo de Machine Learning desenvolvido na Fase 2**
 para prever a **tendência do IBOVESPA no próximo pregão**.
 
 - Modelo carregado via *pickle*
 - Features técnicas automáticas
-- Monitoramento de métricas do modelo
+- Monitoramento das métricas do modelo
 """)
 
 # ========================================
@@ -50,8 +50,10 @@ def load_csv_optimized():
 def clean_close_price(df):
     Q1, Q3 = df["close"].quantile([0.25, 0.75])
     IQR = Q3 - Q1
-    mask = ~((df["close"] < (Q1 - 1.5 * IQR)) |
-             (df["close"] > (Q3 + 1.5 * IQR)))
+    mask = ~(
+        (df["close"] < (Q1 - 1.5 * IQR)) |
+        (df["close"] > (Q3 + 1.5 * IQR))
+    )
     return df[mask]
 
 def create_features(df):
@@ -102,9 +104,23 @@ def load_model_and_info():
 
     return model, model_info, feature_columns
 
+def extract_feature_columns(feature_columns):
+    """
+    Trata TODOS os formatos possíveis de feature_columns.json
+    """
+    if isinstance(feature_columns, dict):
+        if "feature_columns" in feature_columns:
+            return feature_columns["feature_columns"]
+        else:
+            return list(feature_columns.keys())
+    elif isinstance(feature_columns, list):
+        return feature_columns
+    else:
+        raise ValueError("Formato inválido de feature_columns")
+
 def predict_next_day(df_feat, feature_columns, model):
     try:
-        cols = list(feature_columns.keys())  # 🔧 correção do erro
+        cols = extract_feature_columns(feature_columns)
         X_last = df_feat[cols].iloc[-1:].values
 
         pred = model.predict(X_last)[0]
@@ -119,24 +135,28 @@ def predict_next_day(df_feat, feature_columns, model):
 
 def estimate_next_close(df_feat, last_close):
     """
-    Estimativa simples do valor do próximo dia
-    baseada no retorno médio recente.
+    Estimativa simples do preço do próximo dia útil
     (não é saída direta do modelo)
     """
     mean_return = df_feat["log_return"].tail(20).mean()
-    estimated_price = last_close * np.exp(mean_return)
-    return estimated_price
+    return last_close * np.exp(mean_return)
 
 # ========================================
 # EXECUÇÃO PRINCIPAL
 # ========================================
 
-df_feat, df = load_features_cached()
-model, model_info, feature_columns = load_model_and_info()
+try:
+    df_feat, df = load_features_cached()
+    model, model_info, feature_columns = load_model_and_info()
+    st.success("✅ Dados e modelo carregados com sucesso!")
+except Exception as e:
+    st.error(f"Erro ao carregar dados ou modelo: {e}")
+    st.stop()
 
-st.success("✅ Dados e modelo carregados com sucesso!")
+# ========================================
+# SIDEBAR
+# ========================================
 
-# Sidebar
 st.sidebar.header("⚙️ Filtros")
 dias_back = st.sidebar.slider("Período de análise (dias)", 30, 250, 100)
 df_filtered = df.tail(dias_back)
@@ -153,8 +173,8 @@ col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Preço Atual", f"R$ {last_close:,.2f}")
 
-var = ((last_close / df_filtered["close"].iloc[0]) - 1) * 100
-col2.metric("Variação no Período", f"{var:+.2f}%")
+variacao = ((last_close / df_filtered["close"].iloc[0]) - 1) * 100
+col2.metric("Variação no Período", f"{variacao:+.2f}%")
 
 if pred:
     col3.metric("Previsão (Modelo)", pred, f"Confiança: {conf:.1f}%")
@@ -162,7 +182,7 @@ if pred:
 col4.metric(
     "Preço Estimado (Próx. Dia)",
     f"R$ {estimated_price:,.2f}",
-    help="Estimativa baseada no retorno médio recente (não é saída direta do modelo)"
+    help="Estimativa estatística baseada no retorno médio recente"
 )
 
 # ========================================
@@ -200,20 +220,18 @@ with tab3:
 
     c1, c2, c3 = st.columns(3)
 
-    c1.metric(
-        "Acurácia",
-        f"{model_info['accuracy']:.2%}"
-    )
-
-    c2.metric(
-        "Precision",
-        f"{model_info['precision']:.2%}"
-    )
-
-    c3.metric(
-        "Recall",
-        f"{model_info['recall']:.2%}"
-    )
+    c1.metric("Acurácia", f"{model_info['accuracy']:.2%}")
+    c2.metric("Precision", f"{model_info['precision']:.2%}")
+    c3.metric("Recall", f"{model_info['recall']:.2%}")
 
     with st.expander("🔍 Ver métricas completas"):
         st.json(model_info)
+
+# ========================================
+# RODAPÉ
+# ========================================
+
+st.caption(
+    "⚠️ O modelo fornece uma **previsão direcional**. "
+    "O valor estimado é apenas uma aproximação estatística auxiliar."
+)
