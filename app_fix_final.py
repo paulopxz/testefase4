@@ -1,26 +1,20 @@
 # ========================================
-# SOLUÇÃO FINAL - VERSÃO CONSERVADORA
+# IBOVESPA PREDICTION DASHBOARD
 # Tech Challenge - Fase 4
-# ========================================
-# Estrutura original preservada
-# Ajustes apenas para:
-# - Evidenciar modelo da Fase 2
-# - Corrigir performance
-# - Garantir aderência ao enunciado
+# VERSÃO CONSERVADORA FINAL
 # ========================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from sklearn.preprocessing import StandardScaler
-import warnings
-warnings.filterwarnings('ignore')
 import json
 import pickle
+import warnings
+warnings.filterwarnings("ignore")
 
 # ========================================
-# 1. CONFIGURAÇÃO STREAMLIT
+# CONFIGURAÇÃO STREAMLIT
 # ========================================
 
 st.set_page_config(
@@ -31,204 +25,150 @@ st.set_page_config(
 st.title("📊 IBOVESPA Prediction Dashboard")
 
 st.markdown("""
-### 🤖 Modelo Preditivo
+### 🤖 Modelo Preditivo (Fase 2)
 
-Este dashboard realiza o **deploy do modelo de Machine Learning desenvolvido na Fase 2**
+Este app realiza o **deploy do modelo de Machine Learning desenvolvido na Fase 2**
 para prever a **tendência do IBOVESPA no próximo pregão**.
 
-- Modelo carregado via pickle
-- Features técnicas geradas automaticamente
-- Métricas disponíveis na aba *Performance do Modelo*
+- Modelo carregado via *pickle*
+- Features técnicas automáticas
+- Monitoramento de métricas do modelo
 """)
 
 # ========================================
-# 2. CARREGAR CSV (ORIGINAL)
+# CARGA DE DADOS
 # ========================================
 
 @st.cache_data(ttl=3600)
 def load_csv_optimized():
-    df = pd.read_csv(
-        'Unified_Data.csv',
-        dtype={
-            'close': 'float32',
-            'selic': 'float32'
-        },
-        parse_dates=['date']
+    return pd.read_csv(
+        "Unified_Data.csv",
+        parse_dates=["date"],
+        dtype={"close": "float32", "selic": "float32"}
     )
-    return df
 
-# ========================================
-# 3. CREATE FEATURES (ORIGINAL)
-# ========================================
+def clean_close_price(df):
+    Q1, Q3 = df["close"].quantile([0.25, 0.75])
+    IQR = Q3 - Q1
+    mask = ~((df["close"] < (Q1 - 1.5 * IQR)) |
+             (df["close"] > (Q3 + 1.5 * IQR)))
+    return df[mask]
 
 def create_features(df):
     df = df.copy()
 
-    has_high = 'high' in df.columns
-    has_low = 'low' in df.columns
-    has_open = 'open' in df.columns
-    has_usd_close = 'usd_close' in df.columns
-    has_selic = 'selic' in df.columns
+    df["ma5"] = df["close"].rolling(5).mean()
+    df["ma10"] = df["close"].rolling(10).mean()
+    df["ma20"] = df["close"].rolling(20).mean()
+    df["ma50"] = df["close"].rolling(50).mean()
 
-    df['ma5'] = df['close'].rolling(window=5).mean()
-    df['ma10'] = df['close'].rolling(window=10).mean()
-    df['ma20'] = df['close'].rolling(window=20).mean()
-    df['ma50'] = df['close'].rolling(window=50).mean()
-
-    delta = df['close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+    delta = df["close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(14).mean()
     rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    df["rsi"] = 100 - (100 / (1 + rs))
 
-    df['ema12'] = df['close'].ewm(span=12).mean()
-    df['ema26'] = df['close'].ewm(span=26).mean()
-    df['macd'] = df['ema12'] - df['ema26']
-    df['signal'] = df['macd'].ewm(span=9).mean()
-    df['macd_hist'] = df['macd'] - df['signal']
+    df["ema12"] = df["close"].ewm(span=12).mean()
+    df["ema26"] = df["close"].ewm(span=26).mean()
+    df["macd"] = df["ema12"] - df["ema26"]
+    df["signal"] = df["macd"].ewm(span=9).mean()
 
-    df['volatility'] = df['close'].pct_change().rolling(window=20).std()
-    df['log_return'] = np.log(df['close'] / df['close'].shift(1))
+    df["volatility"] = df["close"].pct_change().rolling(20).std()
+    df["log_return"] = np.log(df["close"] / df["close"].shift(1))
 
-    if has_high and has_low:
-        df['tr'] = np.maximum(
-            df['high'] - df['low'],
-            np.maximum(
-                abs(df['high'] - df['close'].shift()),
-                abs(df['low'] - df['close'].shift())
-            )
-        )
-        df['atr'] = df['tr'].rolling(window=14).mean()
-    else:
-        df['atr'] = df['close'].rolling(window=14).std() * 1.5
-
-    if has_open:
-        df['co_ratio'] = df['close'] / df['open']
-
-    if has_usd_close:
-        df['close_usd_ratio'] = df['close'] / df['usd_close']
-
-    if has_selic:
-        df['selic_normalized'] = (df['selic'] - df['selic'].mean()) / df['selic'].std()
-
-    df['momentum'] = df['close'] - df['close'].shift(10)
-    df['roc'] = (df['close'] - df['close'].shift(12)) / df['close'].shift(12) * 100
-
-    df['bb_middle'] = df['close'].rolling(window=20).mean()
-    bb_std = df['close'].rolling(window=20).std()
-    df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
-    df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
-    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
-
-    df['tenkan'] = (df['close'].rolling(window=9).max() + df['close'].rolling(window=9).min()) / 2
-    df['kijun'] = (df['close'].rolling(window=26).max() + df['close'].rolling(window=26).min()) / 2
-
-    return df
-
-# ========================================
-# 4. LIMPEZA (ORIGINAL)
-# ========================================
-
-def clean_close_price(df):
-    Q1 = df['close'].quantile(0.25)
-    Q3 = df['close'].quantile(0.75)
-    IQR = Q3 - Q1
-
-    mask = ~((df['close'] < (Q1 - 1.5 * IQR)) |
-             (df['close'] > (Q3 + 1.5 * IQR)))
-
-    return df[mask]
-
-# ========================================
-# 5. CACHE FEATURES (ORIGINAL)
-# ========================================
+    return df.dropna()
 
 @st.cache_data(ttl=3600)
 def load_features_cached():
     df = load_csv_optimized()
     df = clean_close_price(df)
-    df_feat = create_features(df).dropna()
+    df_feat = create_features(df)
     return df_feat, df
 
 # ========================================
-# 6. CARREGAR MODELO (ORIGINAL)
+# MODELO
 # ========================================
 
 @st.cache_data(ttl=3600)
 def load_model_and_info():
-    with open('best_model.pkl', 'rb') as f:
+    with open("best_model.pkl", "rb") as f:
         model = pickle.load(f)
 
-    with open('model_info.json', 'r') as f:
+    with open("model_info.json", "r") as f:
         model_info = json.load(f)
 
-    with open('feature_columns.json', 'r') as f:
+    with open("feature_columns.json", "r") as f:
         feature_columns = json.load(f)
 
     return model, model_info, feature_columns
 
-# ========================================
-# 7. PREVISÃO (ORIGINAL + ROBUSTEZ)
-# ========================================
-
 def predict_next_day(df_feat, feature_columns, model):
     try:
-        X_last = df_feat[feature_columns].iloc[-1:].values
+        cols = list(feature_columns.keys())  # 🔧 correção do erro
+        X_last = df_feat[cols].iloc[-1:].values
+
         pred = model.predict(X_last)[0]
         proba = model.predict_proba(X_last)[0].max() * 100
-        return ('ALTA' if pred == 1 else 'BAIXA'), proba
+
+        direction = "ALTA" if pred == 1 else "BAIXA"
+        return direction, proba
+
     except Exception as e:
         st.error(f"Erro na previsão: {e}")
         return None, None
 
-# ========================================
-# 8. LOG DE USO (NOVO - OPCIONAL)
-# ========================================
-
-def log_usage(pred, conf):
-    log = {
-        "timestamp": pd.Timestamp.now().isoformat(),
-        "prediction": pred,
-        "confidence": round(conf, 2)
-    }
-    with open("usage_log.json", "a") as f:
-        f.write(json.dumps(log) + "\n")
+def estimate_next_close(df_feat, last_close):
+    """
+    Estimativa simples do valor do próximo dia
+    baseada no retorno médio recente.
+    (não é saída direta do modelo)
+    """
+    mean_return = df_feat["log_return"].tail(20).mean()
+    estimated_price = last_close * np.exp(mean_return)
+    return estimated_price
 
 # ========================================
-# 9. MAIN
+# EXECUÇÃO PRINCIPAL
 # ========================================
 
-try:
-    df_feat, df = load_features_cached()
-    model, model_info, feature_columns = load_model_and_info()
-    st.success("✅ Dados e modelo carregados com sucesso!")
-except Exception as e:
-    st.error(f"Erro ao carregar dados ou modelo: {e}")
-    st.stop()
+df_feat, df = load_features_cached()
+model, model_info, feature_columns = load_model_and_info()
+
+st.success("✅ Dados e modelo carregados com sucesso!")
 
 # Sidebar
 st.sidebar.header("⚙️ Filtros")
-dias_back = st.sidebar.slider("Dias para exibir:", 30, 250, 100)
-
+dias_back = st.sidebar.slider("Período de análise (dias)", 30, 250, 100)
 df_filtered = df.tail(dias_back)
 
-# Métricas
-col1, col2, col3 = st.columns(3)
+# ========================================
+# MÉTRICAS PRINCIPAIS
+# ========================================
 
-with col1:
-    st.metric("Preço Atual", f"R$ {df_filtered['close'].iloc[-1]:,.2f}")
+last_close = df_filtered["close"].iloc[-1]
+pred, conf = predict_next_day(df_feat, feature_columns, model)
+estimated_price = estimate_next_close(df_feat, last_close)
 
-with col2:
-    variacao = ((df_filtered['close'].iloc[-1] / df_filtered['close'].iloc[0]) - 1) * 100
-    st.metric("Variação", f"{variacao:+.2f}%")
+col1, col2, col3, col4 = st.columns(4)
 
-with col3:
-    pred, conf = predict_next_day(df_feat, feature_columns, model)
-    if pred:
-        st.metric("Previsão Próximo Dia", pred, f"Confiança: {conf:.1f}%")
-        log_usage(pred, conf)
+col1.metric("Preço Atual", f"R$ {last_close:,.2f}")
 
-# Tabs
+var = ((last_close / df_filtered["close"].iloc[0]) - 1) * 100
+col2.metric("Variação no Período", f"{var:+.2f}%")
+
+if pred:
+    col3.metric("Previsão (Modelo)", pred, f"Confiança: {conf:.1f}%")
+
+col4.metric(
+    "Preço Estimado (Próx. Dia)",
+    f"R$ {estimated_price:,.2f}",
+    help="Estimativa baseada no retorno médio recente (não é saída direta do modelo)"
+)
+
+# ========================================
+# TABS
+# ========================================
+
 tab1, tab2, tab3 = st.tabs(
     ["📈 Série Histórica", "📊 Indicadores", "🎯 Performance do Modelo"]
 )
@@ -236,36 +176,27 @@ tab1, tab2, tab3 = st.tabs(
 with tab1:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_filtered['date'],
-        y=df_filtered['close'],
-        mode='lines',
-        name='Close'
+        x=df_filtered["date"],
+        y=df_filtered["close"],
+        mode="lines",
+        name="Close"
     ))
-    fig.update_layout(height=400, hovermode='x unified')
+    fig.update_layout(height=400, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
     st.markdown("""
     **Indicadores utilizados pelo modelo:**
+
     - Médias móveis
     - RSI
     - MACD
     - Volatilidade
-    - Bollinger Bands
-    - Momentum e ROC
+    - Retorno logarítmico
     """)
 
 with tab3:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Acurácia", f"{model_info['accuracy']:.2%}")
-    col2.metric("Precision", f"{model_info['precision']:.2%}")
-    col3.metric("Recall", f"{model_info['recall']:.2%}")
+    st.subheader("📊 Métricas de Validação do Modelo")
 
-    st.markdown("### 📉 Métricas completas")
-    st.json(model_info)
-
-# Rodapé
-st.caption(
-    "⚠️ Este modelo é uma ferramenta auxiliar e não deve ser utilizado "
-    "como única base para decisões de investimento."
-)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Acur
